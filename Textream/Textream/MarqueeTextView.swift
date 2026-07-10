@@ -132,7 +132,10 @@ struct SpeechScrollView: View {
                 }
             }
             .offset(y: scrollOffset + manualOffset)
-            .animation(smoothScroll ? .linear(duration: 0.06) : .easeOut(duration: 0.5), value: scrollOffset)
+            // Spring keeps velocity when a new commit retargets mid-animation;
+            // dampingFraction 1 = no overshoot (a bounce would flash the
+            // neighboring line in a one-line-tall window).
+            .animation(smoothScroll ? .linear(duration: 0.06) : .spring(response: 0.45, dampingFraction: 1.0), value: scrollOffset)
             .animation(.easeOut(duration: 0.15), value: manualOffset)
             .onChange(of: geo.size.height) { _, newHeight in
                 containerHeight = newHeight

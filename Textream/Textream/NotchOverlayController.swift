@@ -371,10 +371,14 @@ class NotchOverlayController: NSObject {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         panel.ignoresMouseEvents = false
         panel.isMovableByWindowBackground = true
-        panel.minSize = NSSize(width: 280, height: panelHeight)
-        panel.maxSize = NSSize(width: 500, height: panelHeight + 350)
+        panel.minSize = NSSize(width: 200, height: 40)
+        panel.maxSize = NSSize(width: screenFrame.width, height: screenFrame.height)
         panel.sharingType = NotchSettings.shared.hideFromScreenShare ? .none : .readOnly
         panel.contentView = contentView
+
+        // Remember the size/position the user last dragged it to
+        panel.setFrameAutosaveName("FloatingPrompterPanel")
+        panel.setFrameUsingName("FloatingPrompterPanel")
 
         panel.orderFrontRegardless()
         self.panel = panel
@@ -1218,6 +1222,9 @@ struct FloatingOverlayView: View {
 
     @State private var appeared = false
 
+    // Window dragged too short for the control bar — show only the text
+    @State private var isCompact = false
+
     // Auto-advance countdown for follow-cursor mode (where buttons can't be clicked)
     @State private var countdownRemaining: Int = 0
     @State private var countdownTimer: Timer? = nil
@@ -1289,12 +1296,17 @@ struct FloatingOverlayView: View {
             } else if isDone && (listeningMode == .wordTracking || hasNextPage) {
                 floatingDoneView
             } else {
-                floatingPrompterView
+                floatingPrompterView(compact: isCompact)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onGeometryChange(for: Bool.self) { proxy in
+            proxy.size.height < 90
+        } action: { compact in
+            isCompact = compact
+        }
         .overlay(alignment: .topTrailing) {
-            if NotchSettings.shared.showElapsedTime {
+            if NotchSettings.shared.showElapsedTime && !isCompact {
                 ElapsedTimeView(fontSize: 11)
                     .padding(.top, 6)
                     .padding(.trailing, 10)
@@ -1372,7 +1384,7 @@ struct FloatingOverlayView: View {
         }
     }
 
-    private var floatingPrompterView: some View {
+    private func floatingPrompterView(compact: Bool) -> some View {
         VStack(spacing: 0) {
             SpeechScrollView(
                 words: words,
@@ -1399,133 +1411,136 @@ struct FloatingOverlayView: View {
                 smoothWordProgress: timerWordProgress,
                 isListening: isEffectivelyListening
             )
-            .padding(.horizontal, 16)
-            .padding(.top, 12)
+            .padding(.horizontal, compact ? 10 : 16)
+            .padding(.top, compact ? 4 : 12)
+            .padding(.bottom, compact ? 4 : 0)
 
-            HStack(alignment: .center, spacing: 8) {
-                AudioWaveformProgressView(
-                    levels: speechRecognizer.audioLevels,
-                    progress: totalCharCount > 0
-                        ? Double(effectiveCharCount) / Double(totalCharCount)
-                        : 0
-                )
-                .frame(width: 160, height: 24)
+            if !compact {
+                HStack(alignment: .center, spacing: 8) {
+                    AudioWaveformProgressView(
+                        levels: speechRecognizer.audioLevels,
+                        progress: totalCharCount > 0
+                            ? Double(effectiveCharCount) / Double(totalCharCount)
+                            : 0
+                    )
+                    .frame(width: 160, height: 24)
 
-                if let error = speechRecognizer.error {
-                    Label(error, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundStyle(.red.opacity(0.9))
-                        .lineLimit(1)
-                        .truncationMode(.tail)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .help(error)
-                } else if listeningMode == .wordTracking {
-                    Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .lineLimit(1)
-                        .truncationMode(.head)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                } else {
-                    Spacer()
-                }
-
-                if !followingCursor && content.pageCount > 1 {
-                    if hasNextPage {
-                        Button {
-                            speechRecognizer.shouldAdvancePage = true
-                        } label: {
-                            Image(systemName: "forward.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.5)
-                                .onEnded { _ in
-                                    content.showPagePicker = true
-                                }
-                        )
+                    if let error = speechRecognizer.error {
+                        Label(error, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.red.opacity(0.9))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .help(error)
+                    } else if listeningMode == .wordTracking {
+                        Text(speechRecognizer.lastSpokenText.split(separator: " ").suffix(3).joined(separator: " "))
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.5))
+                            .lineLimit(1)
+                            .truncationMode(.head)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     } else {
-                        Button {
-                            content.jumpToPageIndex = 0
-                        } label: {
-                            Image(systemName: "backward.end.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(.white.opacity(0.6))
-                                .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .simultaneousGesture(
-                            LongPressGesture(minimumDuration: 0.5)
-                                .onEnded { _ in
-                                    content.showPagePicker = true
-                                }
-                        )
+                        Spacer()
                     }
-                }
 
-                if !followingCursor {
-                    if listeningMode == .classic {
-                        Button {
-                            isPaused.toggle()
-                        } label: {
-                            Image(systemName: isPaused ? "play.fill" : "pause.fill")
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(isPaused ? .white.opacity(0.6) : .yellow.opacity(0.8))
-                                .frame(width: 24, height: 24)
-                                .background(.white.opacity(0.15))
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                    } else {
-                        Button {
-                            if speechRecognizer.isListening || speechRecognizer.isStarting {
-                                speechRecognizer.stop()
-                            } else {
-                                speechRecognizer.resume()
+                    if !followingCursor && content.pageCount > 1 {
+                        if hasNextPage {
+                            Button {
+                                speechRecognizer.shouldAdvancePage = true
+                            } label: {
+                                Image(systemName: "forward.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .frame(width: 24, height: 24)
+                                    .background(.white.opacity(0.15))
+                                    .clipShape(Circle())
                             }
-                        } label: {
-                            Group {
-                                if speechRecognizer.isStarting {
-                                    ProgressView()
-                                        .controlSize(.mini)
-                                        .tint(.white.opacity(0.8))
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5)
+                                    .onEnded { _ in
+                                        content.showPagePicker = true
+                                    }
+                            )
+                        } else {
+                            Button {
+                                content.jumpToPageIndex = 0
+                            } label: {
+                                Image(systemName: "backward.end.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .frame(width: 24, height: 24)
+                                    .background(.white.opacity(0.15))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                            .simultaneousGesture(
+                                LongPressGesture(minimumDuration: 0.5)
+                                    .onEnded { _ in
+                                        content.showPagePicker = true
+                                    }
+                            )
+                        }
+                    }
+
+                    if !followingCursor {
+                        if listeningMode == .classic {
+                            Button {
+                                isPaused.toggle()
+                            } label: {
+                                Image(systemName: isPaused ? "play.fill" : "pause.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(isPaused ? .white.opacity(0.6) : .yellow.opacity(0.8))
+                                    .frame(width: 24, height: 24)
+                                    .background(.white.opacity(0.15))
+                                    .clipShape(Circle())
+                            }
+                            .buttonStyle(.plain)
+                        } else {
+                            Button {
+                                if speechRecognizer.isListening || speechRecognizer.isStarting {
+                                    speechRecognizer.stop()
                                 } else {
-                                    Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic.slash.fill")
-                                        .font(.system(size: 10, weight: .bold))
+                                    speechRecognizer.resume()
                                 }
+                            } label: {
+                                Group {
+                                    if speechRecognizer.isStarting {
+                                        ProgressView()
+                                            .controlSize(.mini)
+                                            .tint(.white.opacity(0.8))
+                                    } else {
+                                        Image(systemName: speechRecognizer.isListening ? "mic.fill" : "mic.slash.fill")
+                                            .font(.system(size: 10, weight: .bold))
+                                    }
+                                }
+                                .foregroundStyle(speechRecognizer.isListening ? .yellow.opacity(0.8) : .white.opacity(0.6))
+                                .frame(width: 24, height: 24)
+                                .background(.white.opacity(0.15))
+                                .clipShape(Circle())
                             }
-                            .foregroundStyle(speechRecognizer.isListening ? .yellow.opacity(0.8) : .white.opacity(0.6))
-                            .frame(width: 24, height: 24)
-                            .background(.white.opacity(0.15))
-                            .clipShape(Circle())
+                            .buttonStyle(.plain)
+                        }
+
+                        Button {
+                            speechRecognizer.forceStop()
+                            speechRecognizer.shouldDismiss = true
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(.white.opacity(0.6))
+                                .frame(width: 24, height: 24)
+                                .background(.white.opacity(0.15))
+                                .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
                     }
-
-                    Button {
-                        speechRecognizer.forceStop()
-                        speechRecognizer.shouldDismiss = true
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .frame(width: 24, height: 24)
-                            .background(.white.opacity(0.15))
-                            .clipShape(Circle())
-                    }
-                    .buttonStyle(.plain)
                 }
+                .frame(height: 24)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 12)
             }
-            .frame(height: 24)
-            .padding(.horizontal, 16)
-            .padding(.bottom, 12)
         }
     }
 
