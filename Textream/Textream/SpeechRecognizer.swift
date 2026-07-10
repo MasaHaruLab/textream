@@ -127,6 +127,13 @@ class SpeechRecognizer {
     /// against the text at the new offset.
     private var lastJumpAt: Date = .distantPast
 
+    /// Bounded-evidence matching: only the recent tail of the transcript is
+    /// aligned, against a source window anchored just behind the committed
+    /// position. Bounding both sides keeps match quality independent of how
+    /// long the recognition task has been accumulating transcript.
+    private let evidenceTailLength = 36
+    private let scanBacktrack = 80
+
     /// Match debug logging — enable with
     /// `defaults write dev.fka.textream matchDebugLog -bool YES` (restart app).
     /// Appends to ~/Library/Logs/Textream-match.log; no cost when disabled.
@@ -273,6 +280,45 @@ class SpeechRecognizer {
         if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_SpeechRecognition") {
             NSWorkspace.shared.open(url)
         }
+    }
+
+    /// Build recognizer vocabulary hints from the upcoming script. Latin
+    /// tokens pass as-is; CJK text (no space-delimited words — the source has
+    /// a space injected between every hanzi) is sliced into overlapping short
+    /// phrases. Script-specific proper nouns are exactly what on-device
+    /// recognition mis-hears without hints.
+    private func contextualHints() -> [String] {
+        let upcoming = String(sourceText.dropFirst(matchStartOffset).prefix(600))
+        var hints: [String] = []
+        var cjkRun = ""
+        func flushRun() {
+            let chars = Array(cjkRun)
+            cjkRun = ""
+            guard chars.count >= 2 else { return }
+            var i = 0
+            while i < chars.count {
+                let chunk = String(chars[i..<min(i + 6, chars.count)])
+                if chunk.count >= 2 { hints.append(chunk) }
+                i += 4
+            }
+        }
+        for token in upcoming.split(separator: " ") {
+            let cleaned = String(token).lowercased().filter { $0.isLetter || $0.isNumber }
+            if cleaned.isEmpty {
+                // Punctuation marks a phrase boundary — don't bridge it.
+                flushRun()
+                continue
+            }
+            if cleaned.unicodeScalars.contains(where: { $0.isCJK }) {
+                cjkRun += cleaned
+                continue
+            }
+            flushRun()
+            if cleaned.count >= 5 { hints.append(cleaned) }
+        }
+        flushRun()
+        var seen = Set<String>()
+        return Array(hints.filter { seen.insert($0).inserted }.prefix(50))
     }
 
     private func failListening(_ message: String) {
@@ -462,14 +508,8 @@ class SpeechRecognizer {
             recognitionRequest.taskHint = .dictation
             mlog("begin locale=\(NotchSettings.shared.speechLocale) onDevice=\(speechRecognizer.supportsOnDeviceRecognition) available=\(speechRecognizer.isAvailable)")
 
-            // Add contextual strings from the source text to improve STT accuracy.
-            // Tokens containing CJK are excluded: with no spaces to split on they
-            // arrive as whole sentences, which only degrade recognition as hints.
-            let upcoming = String(sourceText.dropFirst(matchStartOffset))
-            let contextWords = upcoming.split(separator: " ")
-                .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-                .filter { $0.count >= 5 && !$0.unicodeScalars.contains(where: { $0.isCJK }) }
-            let uniqueContextWords = Array(Set(contextWords).prefix(50))
+            // Add contextual strings from the upcoming script to improve STT accuracy
+            let uniqueContextWords = contextualHints()
             if !uniqueContextWords.isEmpty {
                 recognitionRequest.contextualStrings = uniqueContextWords
             }
@@ -689,13 +729,8 @@ class SpeechRecognizer {
         newRequest.shouldReportPartialResults = true
         newRequest.taskHint = .dictation
 
-        // Add contextual strings for the remaining text. CJK tokens excluded —
-        // see the matching filter in beginRecognition.
-        let upcoming = String(sourceText.dropFirst(matchStartOffset))
-        let contextWords = upcoming.split(separator: " ")
-            .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-            .filter { $0.count >= 5 && !$0.unicodeScalars.contains(where: { $0.isCJK }) }
-        let uniqueWords = Array(Set(contextWords).prefix(50))
+        // Add contextual strings from the upcoming script
+        let uniqueWords = contextualHints()
         if !uniqueWords.isEmpty {
             newRequest.contextualStrings = uniqueWords
         }
@@ -815,20 +850,30 @@ class SpeechRecognizer {
         }
         guard !spoken.isEmpty else { return }
 
-        // Strategy 1: character-level fuzzy match from the start offset
-        let charResult = charLevelMatch(spoken: spoken)
+        // Bounded-evidence alignment: never re-scan the whole transcript.
+        // The greedy scan revisits every old recognition error on every
+        // partial, so with a growing transcript match quality decays — in
+        // practice stalls got denser the longer a task ran and cleared on
+        // the 55s task restart. Matching only the recent tail against a
+        // window behind the committed position decouples match quality
+        // from session length.
+        let evidence = String(spoken.suffix(evidenceTailLength))
+        let scanBase = max(0, recognizedCharCount - scanBacktrack)
+
+        // Strategy 1: character-level fuzzy match over the evidence tail
+        let charResult = charLevelMatch(spoken: evidence, from: scanBase)
 
         // Strategy 2: word-level match (handles STT word substitutions)
-        let wordResult = wordLevelMatch(spoken: spoken)
+        let wordResult = wordLevelMatch(spoken: evidence, from: scanBase)
 
         // Combine the two strategies. When they agree, average; when they
         // disagree, prefer the further (word-level) match so fast reading can
         // catch up instead of being dragged back by the brittle character scan.
         let best = SpeechTextAlignment.bestOffset(characterResult: charResult, wordResult: wordResult)
 
-        let rawCandidate = min(matchStartOffset + best, sourceText.count)
+        let rawCandidate = min(scanBase + best, sourceText.count)
         let candidate = advancePastAnnotations(from: rawCandidate)
-        mlog("match char=\(charResult) word=\(wordResult) cand=\(candidate) rec=\(recognizedCharCount) start=\(matchStartOffset) tail=\(String(spoken.suffix(16)))")
+        mlog("match char=\(charResult) word=\(wordResult) cand=\(candidate) rec=\(recognizedCharCount) base=\(scanBase) tail=\(String(evidence.suffix(16)))")
         guard candidate > recognizedCharCount else { return }
 
         // Confidence gating: require 2-of-3 recent results to agree on
@@ -873,8 +918,8 @@ class SpeechRecognizer {
         )
     }
 
-    private func charLevelMatch(spoken: String) -> Int {
-        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+    private func charLevelMatch(spoken: String, from base: Int) -> Int {
+        let remainingSource = String(sourceText.dropFirst(base))
         // Use Character arrays (not unicodeScalars) so counts match sourceText.count
         let src = Array(remainingSource.lowercased())
         let spk = Array(Self.normalize(spoken))
@@ -1012,8 +1057,8 @@ class SpeechRecognizer {
         return stripped.isEmpty
     }
 
-    private func wordLevelMatch(spoken: String) -> Int {
-        let remainingSource = String(sourceText.dropFirst(matchStartOffset))
+    private func wordLevelMatch(spoken: String, from base: Int) -> Int {
+        let remainingSource = String(sourceText.dropFirst(base))
         let sourceWords = remainingSource.split(separator: " ").map { String($0) }
         let spokenWords = splitTextIntoWords(spoken.lowercased())
 
