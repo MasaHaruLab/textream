@@ -4,6 +4,8 @@ Fork of f/textream (macOS teleprompter, no upstream LICENSE — personal use onl
 
 ## Our mod
 - `seeThroughNoBlur` setting ("See-through (no blur)" toggle in Settings): skips the NSVisualEffectView blur in both notch-transparency and floating-glass backgrounds, leaving only the adjustable black tint — screen content behind stays crisp.
+- Floating window free-resize: min 200×40, max = screen; frame autosaved ("FloatingPrompterPanel"). Below 90pt tall = compact mode (control bar/elapsed time hidden, one-line prompter). Word-tracking scroll uses a critically damped spring. Her `overlayMode` is set to `floating` (was default pinned).
+- Matching rewrites (stall fixes) are chronicled in 项目日志.md; debug log toggle: `defaults write dev.fka.textream matchDebugLog -bool YES` → ~/Library/Logs/Textream-match.log (currently ON — turn off once stable).
 
 ## Build (no Xcode installed — swiftc manual build)
 ```
