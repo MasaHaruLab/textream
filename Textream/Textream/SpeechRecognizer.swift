@@ -440,11 +440,13 @@ class SpeechRecognizer {
             recognitionRequest.shouldReportPartialResults = true
             recognitionRequest.taskHint = .dictation
 
-            // Add contextual strings from the source text to improve STT accuracy
+            // Add contextual strings from the source text to improve STT accuracy.
+            // Tokens containing CJK are excluded: with no spaces to split on they
+            // arrive as whole sentences, which only degrade recognition as hints.
             let upcoming = String(sourceText.dropFirst(matchStartOffset))
             let contextWords = upcoming.split(separator: " ")
                 .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-                .filter { $0.count >= 5 }
+                .filter { $0.count >= 5 && !$0.unicodeScalars.contains(where: { $0.isCJK }) }
             let uniqueContextWords = Array(Set(contextWords).prefix(50))
             if !uniqueContextWords.isEmpty {
                 recognitionRequest.contextualStrings = uniqueContextWords
@@ -663,11 +665,12 @@ class SpeechRecognizer {
         newRequest.shouldReportPartialResults = true
         newRequest.taskHint = .dictation
 
-        // Add contextual strings for the remaining text
+        // Add contextual strings for the remaining text. CJK tokens excluded —
+        // see the matching filter in beginRecognition.
         let upcoming = String(sourceText.dropFirst(matchStartOffset))
         let contextWords = upcoming.split(separator: " ")
             .map { String($0).lowercased().filter { $0.isLetter || $0.isNumber } }
-            .filter { $0.count >= 5 }
+            .filter { $0.count >= 5 && !$0.unicodeScalars.contains(where: { $0.isCJK }) }
         let uniqueWords = Array(Set(contextWords).prefix(50))
         if !uniqueWords.isEmpty {
             newRequest.contextualStrings = uniqueWords
@@ -909,6 +912,43 @@ class SpeechRecognizer {
                             found = true
                             break
                         }
+                    }
+                }
+                if found { continue }
+
+                // N-gram re-anchor: recognition-error bursts and task-restart
+                // gaps push the divergence beyond the 5-char windows above,
+                // wedging the scan for the rest of the session — worst on CJK
+                // scripts, where the word-level strategy can't rescue it (the
+                // source has no spaces to split into words). Take the next few
+                // alphanumeric spoken chars as an anchor — long enough to be
+                // unambiguous — and search further ahead in the source for it.
+                let anchorLen = rc.unicodeScalars.first.map({ $0.isCJK }) == true ? 3 : 6
+                var anchor: [Character] = []
+                var scan = ri
+                while scan < spk.count && anchor.count < anchorLen {
+                    if spk[scan].isLetter || spk[scan].isNumber { anchor.append(spk[scan]) }
+                    scan += 1
+                }
+                if anchor.count == anchorLen {
+                    var sj = si + 1
+                    var examined = 0
+                    while sj < src.count && examined < 40 {
+                        if src[sj].isLetter || src[sj].isNumber {
+                            var k = 0
+                            var pos = sj
+                            while pos < src.count && k < anchor.count {
+                                if !src[pos].isLetter && !src[pos].isNumber { pos += 1; continue }
+                                if src[pos] == anchor[k] { k += 1; pos += 1 } else { break }
+                            }
+                            if k == anchor.count {
+                                si = sj
+                                found = true
+                                break
+                            }
+                            examined += 1
+                        }
+                        sj += 1
                     }
                 }
                 if found { continue }

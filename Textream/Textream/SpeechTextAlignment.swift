@@ -88,6 +88,13 @@ enum SpeechTextAlignment {
         wordResult: Int,
         agreementTolerance: Int = 20
     ) -> Int {
+        // A zero from one strategy means "found nothing", not "position 0" —
+        // averaging real progress with it would halve the advance. Word-level
+        // is always zero on CJK scripts (no spaces to split the source into
+        // words), so averaging made the highlight permanently drag there.
+        if characterResult == 0 || wordResult == 0 {
+            return max(characterResult, wordResult)
+        }
         if abs(characterResult - wordResult) <= agreementTolerance {
             return (characterResult + wordResult) / 2
         }
