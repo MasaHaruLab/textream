@@ -921,7 +921,7 @@ class SpeechRecognizer {
     private func charLevelMatch(spoken: String, from base: Int) -> Int {
         let remainingSource = String(sourceText.dropFirst(base))
         // Use Character arrays (not unicodeScalars) so counts match sourceText.count
-        let src = Array(remainingSource.lowercased())
+        let src = Array(Self.canonicalize(remainingSource))
         let spk = Array(Self.normalize(spoken))
 
         var si = 0
@@ -1060,7 +1060,7 @@ class SpeechRecognizer {
     private func wordLevelMatch(spoken: String, from base: Int) -> Int {
         let remainingSource = String(sourceText.dropFirst(base))
         let sourceWords = remainingSource.split(separator: " ").map { String($0) }
-        let spokenWords = splitTextIntoWords(spoken.lowercased())
+        let spokenWords = splitTextIntoWords(Self.canonicalize(spoken))
 
         var si = 0 // source word index
         var ri = 0 // spoken word index
@@ -1085,7 +1085,7 @@ class SpeechRecognizer {
                 continue
             }
 
-            let srcWord = sourceWords[si].lowercased()
+            let srcWord = Self.canonicalize(sourceWords[si])
                 .filter { $0.isLetter || $0.isNumber }
             let spkWord = spokenWords[ri]
                 .filter { $0.isLetter || $0.isNumber }
@@ -1118,7 +1118,7 @@ class SpeechRecognizer {
                 var foundSrc = false
                 let maxSrcSkip = min(5, sourceWords.count - si - 1)
                 for skip in 1...max(1, maxSrcSkip) where skip <= maxSrcSkip {
-                    let nextSrc = sourceWords[si + skip].lowercased().filter { $0.isLetter || $0.isNumber }
+                    let nextSrc = Self.canonicalize(sourceWords[si + skip]).filter { $0.isLetter || $0.isNumber }
                     if nextSrc == spkWord || isFuzzyMatch(nextSrc, spkWord) {
                         // Add all skipped source words' char counts
                         for s in 0..<skip {
@@ -1197,8 +1197,21 @@ class SpeechRecognizer {
         return dp[b.count]
     }
 
+    /// ASCII digits map to hanzi numerals so the recognizer's inverse text
+    /// normalization ("二月" spoken → "2月" transcribed) still matches scripts
+    /// written with Chinese numerals, and vice versa. One char to one char,
+    /// so source offsets stay aligned.
+    private static let digitToHanzi: [Character: Character] = [
+        "0": "〇", "1": "一", "2": "二", "3": "三", "4": "四",
+        "5": "五", "6": "六", "7": "七", "8": "八", "9": "九",
+    ]
+
+    private static func canonicalize(_ text: String) -> String {
+        String(text.lowercased().map { digitToHanzi[$0] ?? $0 })
+    }
+
     private static func normalize(_ text: String) -> String {
-        text.lowercased()
+        Self.canonicalize(text)
             .filter { $0.isLetter || $0.isNumber || $0.isWhitespace }
     }
 }
