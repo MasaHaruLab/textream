@@ -127,6 +127,26 @@ class SpeechRecognizer {
     /// against the text at the new offset.
     private var lastJumpAt: Date = .distantPast
 
+    /// Match debug logging — enable with
+    /// `defaults write dev.fka.textream matchDebugLog -bool YES` (restart app).
+    /// Appends to ~/Library/Logs/Textream-match.log; no cost when disabled.
+    private let matchDebugEnabled = UserDefaults.standard.bool(forKey: "matchDebugLog")
+    private let matchLogURL: URL = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs/Textream-match.log")
+    private func mlog(_ line: String) {
+        guard matchDebugEnabled else { return }
+        let entry = String(format: "%.2f %@\n", Date().timeIntervalSince1970, line)
+        guard let data = entry.data(using: .utf8) else { return }
+        if let handle = try? FileHandle(forWritingTo: matchLogURL) {
+            defer { try? handle.close() }
+            handle.seekToEndOfFile()
+            handle.write(data)
+        } else {
+            try? data.write(to: matchLogURL)
+        }
+    }
+
     /// Update the source text while preserving the current recognized char count.
     /// Used by Director Mode to live-edit unread text without resetting read progress.
     func updateText(_ text: String, preservingCharCount: Int) {
@@ -256,6 +276,7 @@ class SpeechRecognizer {
     }
 
     private func failListening(_ message: String) {
+        mlog("FAIL \(message)")
         voiceActivityDetector.reset()
         shouldListen = false
         isListening = false
@@ -439,6 +460,7 @@ class SpeechRecognizer {
             }
             recognitionRequest.shouldReportPartialResults = true
             recognitionRequest.taskHint = .dictation
+            mlog("begin locale=\(NotchSettings.shared.speechLocale) onDevice=\(speechRecognizer.supportsOnDeviceRecognition) available=\(speechRecognizer.isAvailable)")
 
             // Add contextual strings from the source text to improve STT accuracy.
             // Tokens containing CJK are excluded: with no spaces to split on they
@@ -555,6 +577,7 @@ class SpeechRecognizer {
                         // timeouts with no retry limit; use backoff for real errors.
                         let nsError = error as NSError
                         let isTimeout = nsError.code == 1110 || nsError.code == 216
+                        self.mlog("error code=\(nsError.code) domain=\(nsError.domain) timeout=\(isTimeout) retry=\(self.retryCount) rec=\(self.recognizedCharCount)")
 
                         if isTimeout {
                             // Expected timeout — restart immediately, no retry limit
@@ -646,6 +669,7 @@ class SpeechRecognizer {
         let currentRecognitionGeneration = recognitionGeneration
         // Update match offset before restarting
         matchStartOffset = recognizedCharCount
+        mlog("restartTask rec=\(recognizedCharCount)")
         recentMatchPositions = []
         // New task = fresh transcript. lastSpokenText must be cleared too:
         // a jump taken before the first new result would otherwise anchor on
@@ -732,6 +756,7 @@ class SpeechRecognizer {
 
                     let nsError = error as NSError
                     let isTimeout = nsError.code == 1110 || nsError.code == 216
+                    self.mlog("error(restart) code=\(nsError.code) domain=\(nsError.domain) timeout=\(isTimeout) retry=\(self.retryCount) rec=\(self.recognizedCharCount)")
 
                     if isTimeout {
                         self.retryCount = 0
@@ -760,6 +785,7 @@ class SpeechRecognizer {
         preemptiveRestartTimer?.invalidate()
         preemptiveRestartTimer = Timer.scheduledTimer(withTimeInterval: 55.0, repeats: true) { [weak self] _ in
             guard let self, self.isListening, !self.sourceText.isEmpty else { return }
+            self.mlog("preemptive-restart")
             self.restartTask()
         }
     }
@@ -802,6 +828,7 @@ class SpeechRecognizer {
 
         let rawCandidate = min(matchStartOffset + best, sourceText.count)
         let candidate = advancePastAnnotations(from: rawCandidate)
+        mlog("match char=\(charResult) word=\(wordResult) cand=\(candidate) rec=\(recognizedCharCount) start=\(matchStartOffset) tail=\(String(spoken.suffix(16)))")
         guard candidate > recognizedCharCount else { return }
 
         // Confidence gating: require 2-of-3 recent results to agree on
@@ -923,6 +950,9 @@ class SpeechRecognizer {
                 // source has no spaces to split into words). Take the next few
                 // alphanumeric spoken chars as an anchor — long enough to be
                 // unambiguous — and search further ahead in the source for it.
+                // The window must cover how far a reader can drift before
+                // noticing the stall: at ~5 hanzi/s even a few seconds is
+                // dozens of chars, so a small window can never re-catch.
                 let anchorLen = rc.unicodeScalars.first.map({ $0.isCJK }) == true ? 3 : 6
                 var anchor: [Character] = []
                 var scan = ri
@@ -933,7 +963,7 @@ class SpeechRecognizer {
                 if anchor.count == anchorLen {
                     var sj = si + 1
                     var examined = 0
-                    while sj < src.count && examined < 40 {
+                    while sj < src.count && examined < 300 {
                         if src[sj].isLetter || src[sj].isNumber {
                             var k = 0
                             var pos = sj
