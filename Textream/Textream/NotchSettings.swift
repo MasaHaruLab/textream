@@ -378,6 +378,10 @@ class NotchSettings {
         didSet { UserDefaults.standard.set(overlayTransparencyOpacity, forKey: "overlayTransparencyOpacity") }
     }
 
+    var seeThroughNoBlur: Bool {
+        didSet { UserDefaults.standard.set(seeThroughNoBlur, forKey: "seeThroughNoBlur") }
+    }
+
     var followCursorWhenUndocked: Bool {
         didSet { UserDefaults.standard.set(followCursorWhenUndocked, forKey: "followCursorWhenUndocked") }
     }
@@ -486,6 +490,7 @@ class NotchSettings {
         self.overlayTransparency = UserDefaults.standard.object(forKey: "overlayTransparency") as? Bool ?? false
         let savedTransparencyOpacity = UserDefaults.standard.double(forKey: "overlayTransparencyOpacity")
         self.overlayTransparencyOpacity = savedTransparencyOpacity > 0 ? savedTransparencyOpacity : 0.85
+        self.seeThroughNoBlur = UserDefaults.standard.object(forKey: "seeThroughNoBlur") as? Bool ?? false
         self.followCursorWhenUndocked = UserDefaults.standard.object(forKey: "followCursorWhenUndocked") as? Bool ?? false
         self.externalDisplayMode = ExternalDisplayMode(rawValue: UserDefaults.standard.string(forKey: "externalDisplayMode") ?? "") ?? .off
         let savedScreenID = UserDefaults.standard.integer(forKey: "externalScreenID")

@@ -732,12 +732,14 @@ struct NotchOverlayView: View {
 
                 if isTransparent {
                     // Blurred background layer clipped to the Dynamic Island shape
-                    NotchBlurView()
-                        .clipShape(DynamicIslandShape(
-                            topInset: currentTopInset,
-                            bottomRadius: currentBottomRadius
-                        ))
-                        .frame(width: currentWidth, height: currentHeight)
+                    if !NotchSettings.shared.seeThroughNoBlur {
+                        NotchBlurView()
+                            .clipShape(DynamicIslandShape(
+                                topInset: currentTopInset,
+                                bottomRadius: currentBottomRadius
+                            ))
+                            .frame(width: currentWidth, height: currentHeight)
+                    }
 
                     // Dark tint overlay so text remains readable
                     DynamicIslandShape(
@@ -1302,7 +1304,9 @@ struct FloatingOverlayView: View {
             Group {
                 if NotchSettings.shared.floatingGlassEffect {
                     ZStack {
-                        GlassEffectView()
+                        if !NotchSettings.shared.seeThroughNoBlur {
+                            GlassEffectView()
+                        }
                         RoundedRectangle(cornerRadius: 16)
                             .fill(.black.opacity(NotchSettings.shared.glassOpacity))
                     }

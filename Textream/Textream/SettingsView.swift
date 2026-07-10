@@ -184,7 +184,9 @@ struct NotchPreviewContent: View {
                 Group {
                     if isTransparent {
                         ZStack {
-                            NotchBlurView()
+                            if !settings.seeThroughNoBlur {
+                                NotchBlurView()
+                            }
                             DynamicIslandShape(
                                 topInset: 16 * (1 - cornerPhase),
                                 bottomRadius: 18
@@ -209,7 +211,9 @@ struct NotchPreviewContent: View {
                 Group {
                     if settings.floatingGlassEffect {
                         ZStack {
-                            GlassEffectView()
+                            if !settings.seeThroughNoBlur {
+                                GlassEffectView()
+                            }
                             RoundedRectangle(cornerRadius: 16)
                                 .fill(.black.opacity(settings.glassOpacity))
                         }
@@ -850,6 +854,17 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
 
                     if settings.overlayTransparency {
+                        Toggle(isOn: $settings.seeThroughNoBlur) {
+                            Text("See-through (no blur)")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+
+                        Text("Skips the frosted blur so content behind the overlay stays crisp.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Amount")
@@ -903,6 +918,17 @@ struct SettingsView: View {
                     .controlSize(.small)
 
                     if settings.floatingGlassEffect {
+                        Toggle(isOn: $settings.seeThroughNoBlur) {
+                            Text("See-through (no blur)")
+                                .font(.system(size: 13, weight: .medium))
+                        }
+                        .toggleStyle(.switch)
+                        .controlSize(.small)
+
+                        Text("Skips the frosted blur so content behind the window stays crisp.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+
                         VStack(alignment: .leading, spacing: 6) {
                             HStack {
                                 Text("Opacity")
