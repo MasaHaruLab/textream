@@ -23,3 +23,6 @@ Then: copy /Applications/Textream.app as donor bundle → swap Contents/MacOS/Te
 - Patch base = tag v1.6.2 (must match installed donor bundle version).
 - App hides its window when launched from terminal (`launchedExternally` → accessory mode); a second `open -a Textream` surfaces it.
 - Settings live in `defaults` domain `dev.fka.textream` (not sandboxed). speechLocale=zh-CN, hideFromScreenShare defaults true.
+
+## 运行规则铁律(CEO 2026-07-20,全项目通用)
+本文件只写「现在该怎么做」。已撤理由、阶段状态、待签换文一律移 `~/.claude/GOVERNANCE-CHANGELOG.md` 或所属 spec 文档,本文完全不提——不提=最清楚。
